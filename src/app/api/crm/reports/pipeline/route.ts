@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { supabaseAdmin } from '@/lib/supabase';
+import { sql, rows } from '@/lib/db';
 import { validateCrmApiKey } from '@/lib/crm-auth';
 
 export async function GET(request: NextRequest) {
@@ -9,15 +9,28 @@ export async function GET(request: NextRequest) {
 
   try {
     // Fetch all opportunities with account name
-    const { data: opportunities, error } = await supabaseAdmin
-      .from('opportunities')
-      .select('*, accounts(name)');
+    const { data: opportunities, error } = await rows(sql`
+      SELECT row_to_json(t) AS row
+      FROM (
+        SELECT o.*,
+          CASE WHEN a.id IS NULL THEN NULL ELSE json_build_object('name', a.name) END AS accounts
+        FROM opportunities o
+        LEFT JOIN accounts a ON a.id = o.account_id
+      ) t
+    `);
 
     if (error) {
       return Response.json({ error: error.message }, { status: 500 });
     }
 
-    const allDeals = opportunities ?? [];
+    const allDeals = (opportunities ?? []) as {
+      id: string;
+      name: string;
+      value: number | null;
+      stage: string | null;
+      owner: string | null;
+      accounts: { name: string } | null;
+    }[];
 
     // Calculate total pipeline value
     const totalPipelineValue = allDeals.reduce(

@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { supabaseAdmin } from '@/lib/supabase';
+import { updateRowById } from '@/lib/db';
 import { validateCrmApiKey } from '@/lib/crm-auth';
 
 export async function PATCH(
@@ -30,12 +30,7 @@ export async function PATCH(
     }
     updates.updated_at = new Date().toISOString();
 
-    const { data, error } = await supabaseAdmin
-      .from('opportunities')
-      .update(updates)
-      .eq('id', id)
-      .select()
-      .single();
+    const { data, error } = await updateRowById('opportunities', id, updates);
 
     if (error) {
       return Response.json({ error: error.message }, { status: 500 });

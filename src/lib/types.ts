@@ -58,7 +58,7 @@ export interface LLMResponse {
   };
 }
 
-// ── CRM / Supabase Schema Types ────────────────────────────────────
+// ── CRM / Postgres Schema Types ────────────────────────────────────
 
 export interface Account {
   id: string;

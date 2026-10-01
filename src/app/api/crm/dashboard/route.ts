@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { supabaseAdmin } from '@/lib/supabase';
+import { sql, rows } from '@/lib/db';
 
 /**
  * Server-side proxy for the CRM dashboard page.
@@ -10,10 +10,9 @@ export async function GET(request: NextRequest) {
 
   try {
     if (type === 'accounts') {
-      const { data, error } = await supabaseAdmin
-        .from('accounts')
-        .select('*')
-        .order('name');
+      const { data, error } = await rows(sql`
+        SELECT row_to_json(a) AS row FROM accounts a ORDER BY a.name
+      `);
 
       if (error) {
         return Response.json({ error: error.message }, { status: 500 });
@@ -22,15 +21,24 @@ export async function GET(request: NextRequest) {
     }
 
     if (type === 'pipeline') {
-      const { data: opportunities, error } = await supabaseAdmin
-        .from('opportunities')
-        .select('*, accounts(name)');
+      const { data: opportunities, error } = await rows(sql`
+      SELECT row_to_json(t) AS row
+      FROM (
+        SELECT o.*,
+          CASE WHEN a.id IS NULL THEN NULL ELSE json_build_object('name', a.name) END AS accounts
+        FROM opportunities o
+        LEFT JOIN accounts a ON a.id = o.account_id
+      ) t
+      `);
 
       if (error) {
         return Response.json({ error: error.message }, { status: 500 });
       }
 
-      const allDeals = opportunities ?? [];
+      const allDeals = (opportunities ?? []) as {
+        value: number | null;
+        stage: string | null;
+      }[];
       const totalPipelineValue = allDeals.reduce((sum, d) => sum + (d.value ?? 0), 0);
       const totalDeals = allDeals.length;
       const averageDealSize = totalDeals > 0 ? totalPipelineValue / totalDeals : 0;
