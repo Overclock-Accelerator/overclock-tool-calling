@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { supabaseAdmin } from '@/lib/supabase';
+import { sql, rows } from '@/lib/db';
 import { validateCrmApiKey } from '@/lib/crm-auth';
 
 export async function GET(request: NextRequest) {
@@ -12,28 +12,35 @@ export async function GET(request: NextRequest) {
     const accountId = searchParams.get('account_id');
 
     // Build accounts query
-    let accountsQuery = supabaseAdmin.from('accounts').select('*');
-    if (accountId) {
-      accountsQuery = accountsQuery.eq('id', accountId);
-    }
-
-    const { data: accounts, error: accountsError } = await accountsQuery;
+    const { data: accounts, error: accountsError } = await rows(sql`
+      SELECT row_to_json(a) AS row
+      FROM accounts a
+      WHERE (${accountId || null}::uuid IS NULL OR a.id = ${accountId || null}::uuid)
+    `);
 
     if (accountsError) {
       return Response.json({ error: accountsError.message }, { status: 500 });
     }
 
-    const allAccounts = accounts ?? [];
+    const allAccounts = (accounts ?? []) as {
+      id: string;
+      name: string;
+      status: string | null;
+      annual_contract_value: number | null;
+      last_activity_date: string | null;
+    }[];
 
     // For each account, count open opportunities and get last activity
     const enrichedAccounts = await Promise.all(
       allAccounts.map(async (account) => {
         // Count open opportunities (stages that are not 'closed-won' or 'closed-lost')
-        const { count } = await supabaseAdmin
-          .from('opportunities')
-          .select('*', { count: 'exact', head: true })
-          .eq('account_id', account.id)
-          .not('stage', 'in', '("closed-won","closed-lost")');
+        const { data: countRows } = await rows(sql`
+          SELECT count(*)::int AS row
+          FROM opportunities
+          WHERE account_id = ${account.id}::uuid
+            AND NOT (stage IN ('closed-won', 'closed-lost'))
+        `);
+        const count = countRows?.[0] as number | undefined;
 
         // Calculate days since last activity
         const lastActivity = account.last_activity_date;

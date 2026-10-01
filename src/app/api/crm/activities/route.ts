@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { supabaseAdmin } from '@/lib/supabase';
+import { sql, rows, insertRow } from '@/lib/db';
 import { validateCrmApiKey } from '@/lib/crm-auth';
 
 export async function GET(request: NextRequest) {
@@ -13,20 +13,23 @@ export async function GET(request: NextRequest) {
     const type = searchParams.get('type');
     const limit = parseInt(searchParams.get('limit') ?? '20', 10);
 
-    let q = supabaseAdmin
-      .from('activities')
-      .select('*, accounts(name), contacts(name)');
-
-    if (accountId) {
-      q = q.eq('account_id', accountId);
-    }
-    if (type) {
-      q = q.eq('type', type);
-    }
-
-    q = q.order('date', { ascending: false }).limit(limit);
-
-    const { data, error } = await q;
+    // Embedded relations accounts(name), contacts(name) -> LEFT JOINs that
+    // yield { name } or null, matching the PostgREST shape.
+    const { data, error } = await rows(sql`
+      SELECT row_to_json(t) AS row
+      FROM (
+        SELECT act.*,
+          CASE WHEN a.id IS NULL THEN NULL ELSE json_build_object('name', a.name) END AS accounts,
+          CASE WHEN c.id IS NULL THEN NULL ELSE json_build_object('name', c.name) END AS contacts
+        FROM activities act
+        LEFT JOIN accounts a ON a.id = act.account_id
+        LEFT JOIN contacts c ON c.id = act.contact_id
+        WHERE (${accountId || null}::uuid IS NULL OR act.account_id = ${accountId || null}::uuid)
+          AND (${type || null}::text IS NULL OR act.type = ${type || null}::text)
+      ) t
+      ORDER BY t."date" DESC
+      LIMIT ${limit}
+    `);
 
     if (error) {
       return Response.json({ error: error.message }, { status: 500 });
@@ -52,18 +55,14 @@ export async function POST(request: NextRequest) {
       body;
 
     // Insert the activity
-    const { data, error } = await supabaseAdmin
-      .from('activities')
-      .insert({
-        type,
-        account_id,
-        contact_id,
-        opportunity_id,
-        summary,
-        next_steps,
-      })
-      .select()
-      .single();
+    const { data, error } = await insertRow('activities', {
+      type,
+      account_id,
+      contact_id,
+      opportunity_id,
+      summary,
+      next_steps,
+    });
 
     if (error) {
       return Response.json({ error: error.message }, { status: 500 });
@@ -71,10 +70,10 @@ export async function POST(request: NextRequest) {
 
     // Update the account's last_activity_date
     if (account_id) {
-      await supabaseAdmin
-        .from('accounts')
-        .update({ last_activity_date: new Date().toISOString() })
-        .eq('id', account_id);
+      await rows(sql`
+        UPDATE accounts SET last_activity_date = ${new Date().toISOString()}::timestamptz
+        WHERE id = ${account_id}::uuid
+      `);
     }
 
     return Response.json(data, { status: 201 });

@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { supabaseAdmin } from '@/lib/supabase';
+import { sql, rows, insertRow } from '@/lib/db';
 import { validateCrmApiKey } from '@/lib/crm-auth';
 
 export async function GET(request: NextRequest) {
@@ -14,26 +14,22 @@ export async function GET(request: NextRequest) {
     const minValue = searchParams.get('min_value');
     const owner = searchParams.get('owner');
 
-    let q = supabaseAdmin
-      .from('opportunities')
-      .select('*, accounts(name)');
+    const minValueNum = minValue ? Number(minValue) : null;
 
-    if (stage) {
-      q = q.eq('stage', stage);
-    }
-    if (accountId) {
-      q = q.eq('account_id', accountId);
-    }
-    if (minValue) {
-      q = q.gte('value', Number(minValue));
-    }
-    if (owner) {
-      q = q.eq('owner', owner);
-    }
-
-    q = q.order('expected_close');
-
-    const { data, error } = await q;
+    const { data, error } = await rows(sql`
+      SELECT row_to_json(t) AS row
+      FROM (
+        SELECT o.*,
+          CASE WHEN a.id IS NULL THEN NULL ELSE json_build_object('name', a.name) END AS accounts
+        FROM opportunities o
+        LEFT JOIN accounts a ON a.id = o.account_id
+        WHERE (${stage || null}::text IS NULL OR o.stage = ${stage || null}::text)
+          AND (${accountId || null}::uuid IS NULL OR o.account_id = ${accountId || null}::uuid)
+          AND (${minValueNum}::numeric IS NULL OR o.value >= ${minValueNum}::numeric)
+          AND (${owner || null}::text IS NULL OR o.owner = ${owner || null}::text)
+      ) t
+      ORDER BY t.expected_close
+    `);
 
     if (error) {
       return Response.json({ error: error.message }, { status: 500 });
@@ -58,19 +54,15 @@ export async function POST(request: NextRequest) {
     const { name, account_id, stage, value, expected_close, owner, notes } =
       body;
 
-    const { data, error } = await supabaseAdmin
-      .from('opportunities')
-      .insert({
-        name,
-        account_id,
-        stage,
-        value,
-        expected_close,
-        owner,
-        notes,
-      })
-      .select()
-      .single();
+    const { data, error } = await insertRow('opportunities', {
+      name,
+      account_id,
+      stage,
+      value,
+      expected_close,
+      owner,
+      notes,
+    });
 
     if (error) {
       return Response.json({ error: error.message }, { status: 500 });
