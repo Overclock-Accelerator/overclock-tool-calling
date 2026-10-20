@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { supabaseAdmin } from '@/lib/supabase';
+import { sql, rows, insertRow } from '@/lib/db';
 import { validateCrmApiKey } from '@/lib/crm-auth';
 
 export async function GET(request: NextRequest) {
@@ -13,21 +13,14 @@ export async function GET(request: NextRequest) {
     const status = searchParams.get('status');
     const region = searchParams.get('region');
 
-    let q = supabaseAdmin.from('accounts').select('*');
-
-    if (query) {
-      q = q.ilike('name', `%${query}%`);
-    }
-    if (status) {
-      q = q.eq('status', status);
-    }
-    if (region) {
-      q = q.eq('region', region);
-    }
-
-    q = q.order('name');
-
-    const { data, error } = await q;
+    const { data, error } = await rows(sql`
+      SELECT row_to_json(a) AS row
+      FROM accounts a
+      WHERE (${query || null}::text IS NULL OR a.name ILIKE '%' || ${query || null}::text || '%')
+        AND (${status || null}::text IS NULL OR a.status = ${status || null}::text)
+        AND (${region || null}::text IS NULL OR a.region = ${region || null}::text)
+      ORDER BY a.name
+    `);
 
     if (error) {
       return Response.json({ error: error.message }, { status: 500 });
@@ -60,20 +53,16 @@ export async function POST(request: NextRequest) {
       notes,
     } = body;
 
-    const { data, error } = await supabaseAdmin
-      .from('accounts')
-      .insert({
-        name,
-        industry_segment,
-        region,
-        annual_contract_value,
-        status,
-        primary_contact_name,
-        primary_contact_email,
-        notes,
-      })
-      .select()
-      .single();
+    const { data, error } = await insertRow('accounts', {
+      name,
+      industry_segment,
+      region,
+      annual_contract_value,
+      status,
+      primary_contact_name,
+      primary_contact_email,
+      notes,
+    });
 
     if (error) {
       return Response.json({ error: error.message }, { status: 500 });
